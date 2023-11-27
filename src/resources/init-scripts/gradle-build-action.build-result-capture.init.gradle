@@ -16,24 +16,29 @@ if (isTopLevelBuild) {
     if (atLeastGradle6) {
         def useBuildService = version >= GradleVersion.version("6.6")
         settingsEvaluated { settings ->
-            // The `buildScanPublished` hook is the only way to capture the build scan URI.
-            if (settings.pluginManager.hasPlugin("com.gradle.enterprise")) {
-                captureUsingBuildScanPublished(settings.extensions["gradleEnterprise"].buildScan, settings.rootProject, invocationId)
-            }
-            // We also need to add hooks in case the plugin is applied but no build scan is published
+            // By default, use standard mechanisms to capture build results
             if (useBuildService) {
                 captureUsingBuildService(settings, invocationId)
             } else {
                 captureUsingBuildFinished(gradle, invocationId)
             }
+            
+            // The `buildScanPublished` hook allows the capture of the Build Scan URI.
+            // Results captured this way will overwrite any results from the other mechanism.
+            settings.pluginManager.withPlugin("com.gradle.enterprise") {
+                captureUsingBuildScanPublished(settings.extensions["gradleEnterprise"].buildScan, settings.rootProject, invocationId)
+            }
         }
     } else if (atLeastGradle3) {
         projectsEvaluated { gradle ->
-            if (gradle.rootProject.pluginManager.hasPlugin("com.gradle.build-scan")) {
+            // By default, use 'buildFinished' to capture build results
+            captureUsingBuildFinished(gradle, invocationId)
+
+            // The `buildScanPublished` hook allows the capture of the Build Scan URI.
+            // Results captured this way will overwrite any results from 'buildFinished'.
+            gradle.rootProject.pluginManager.withPlugin("com.gradle.build-scan") {
                 captureUsingBuildScanPublished(gradle.rootProject.extensions["buildScan"], gradle.rootProject, invocationId)
             }
-            // We  need to capture in buildFinished in case the plugin is applied but no build scan is published
-            captureUsingBuildFinished(gradle, invocationId)
         }
     }
 }
@@ -50,7 +55,13 @@ def captureUsingBuildScanPublished(buildScanExtension, rootProject, invocationId
             buildResults.setBuildScanUri(buildScan.buildScanUri.toASCIIString())
             buildResults.writeToResultsFile(true)
 
-            println("::set-output name=build-scan-url::${buildScan.buildScanUri}")
+            def githubOutput = System.getenv("GITHUB_OUTPUT")
+            if (githubOutput) {
+                new File(githubOutput) << "build-scan-url=${buildScan.buildScanUri}\n"
+            } else {
+                // Retained for compatibility with older GitHub Enterprise versions
+                println("::set-output name=build-scan-url::${buildScan.buildScanUri}")
+            }
         }
 
         onError { error ->
@@ -62,17 +73,16 @@ def captureUsingBuildScanPublished(buildScanExtension, rootProject, invocationId
 
 def captureUsingBuildFinished(gradle, invocationId) {
     gradle.buildFinished { result ->
+        println "Got buildFinished: ${result}"
         def buildResults = new BuildResults(invocationId, gradle, gradle.rootProject)
         buildResults.setBuildResult(result)
-
         buildResults.writeToResultsFile(false)
-
     }
 }
 
 def captureUsingBuildService(settings, invocationId) {
     gradle.ext.invocationId = invocationId
-    apply from: 'build-result-capture-service.plugin.groovy'
+    apply from: 'gradle-build-action.build-result-capture-service.plugin.groovy'
 }
 
 class BuildResults {

@@ -10,6 +10,7 @@ export class CacheListener {
     cacheReadOnly = false
     cacheWriteOnly = false
     cacheDisabled = false
+    cacheDisabledReason = 'disabled'
 
     get fullyRestored(): boolean {
         return this.cacheEntries.every(x => !x.wasRequestedButNotRestored())
@@ -17,7 +18,7 @@ export class CacheListener {
 
     get cacheStatus(): string {
         if (!cache.isFeatureAvailable()) return 'not available'
-        if (this.cacheDisabled) return 'disabled'
+        if (this.cacheDisabled) return this.cacheDisabledReason
         if (this.cacheWriteOnly) return 'write-only'
         if (this.cacheReadOnly) return 'read-only'
         return 'enabled'
@@ -62,11 +63,11 @@ export class CacheEntryListener {
     requestedRestoreKeys: string[] | undefined
     restoredKey: string | undefined
     restoredSize: number | undefined
+    notRestored: string | undefined
 
     savedKey: string | undefined
     savedSize: number | undefined
-
-    unsaved: string | undefined
+    notSaved: string | undefined
 
     constructor(entryName: string) {
         this.entryName = entryName
@@ -88,6 +89,11 @@ export class CacheEntryListener {
         return this
     }
 
+    markNotRestored(message: string): CacheEntryListener {
+        this.notRestored = message
+        return this
+    }
+
     markSaved(key: string, size: number | undefined): CacheEntryListener {
         this.savedKey = key
         this.savedSize = size
@@ -100,8 +106,8 @@ export class CacheEntryListener {
         return this
     }
 
-    markUnsaved(message: string): CacheEntryListener {
-        this.unsaved = message
+    markNotSaved(message: string): CacheEntryListener {
+        this.notSaved = message
         return this
     }
 }
@@ -166,8 +172,14 @@ function renderEntryDetails(listener: CacheListener): string {
 }
 
 function getRestoredMessage(entry: CacheEntryListener, cacheWriteOnly: boolean): string {
+    if (entry.notRestored) {
+        return `(Entry not restored: ${entry.notRestored})`
+    }
     if (cacheWriteOnly) {
         return '(Entry not restored: cache is write-only)'
+    }
+    if (entry.requestedKey === undefined) {
+        return '(Entry not restored: not requested)'
     }
     if (entry.restoredKey === undefined) {
         return '(Entry not restored: no match found)'
@@ -179,8 +191,8 @@ function getRestoredMessage(entry: CacheEntryListener, cacheWriteOnly: boolean):
 }
 
 function getSavedMessage(entry: CacheEntryListener, cacheReadOnly: boolean): string {
-    if (entry.unsaved) {
-        return `(Entry not saved: ${entry.unsaved})`
+    if (entry.notSaved) {
+        return `(Entry not saved: ${entry.notSaved})`
     }
     if (entry.savedKey === undefined) {
         if (cacheReadOnly) {
@@ -198,7 +210,7 @@ function getCount(
     cacheEntries: CacheEntryListener[],
     predicate: (value: CacheEntryListener) => number | undefined
 ): number {
-    return cacheEntries.filter(e => predicate(e) !== undefined).length
+    return cacheEntries.filter(e => predicate(e)).length
 }
 
 function getSize(

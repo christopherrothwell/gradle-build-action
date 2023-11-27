@@ -2,15 +2,14 @@ import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import path from 'path'
 import fs from 'fs'
+import * as params from './input-params'
 import {CacheListener} from './cache-reporting'
 import {saveCache, restoreCache, cacheDebug, isCacheDebuggingEnabled, tryDelete, generateCacheKey} from './cache-utils'
-import {ConfigurationCacheEntryExtractor, GradleHomeEntryExtractor} from './cache-extract-entries'
+import {GradleHomeEntryExtractor} from './cache-extract-entries'
 
 const RESTORED_CACHE_KEY_KEY = 'restored-cache-key'
 
 export const META_FILE_DIR = '.gradle-build-action'
-const INCLUDE_PATHS_PARAMETER = 'gradle-home-cache-includes'
-const EXCLUDE_PATHS_PARAMETER = 'gradle-home-cache-excludes'
 
 export class GradleStateCache {
     private cacheName: string
@@ -80,7 +79,7 @@ export class GradleStateCache {
     async afterRestore(listener: CacheListener): Promise<void> {
         await this.debugReportGradleUserHomeSize('as restored from cache')
         await new GradleHomeEntryExtractor(this.gradleUserHome).restore(listener)
-        await new ConfigurationCacheEntryExtractor(this.gradleUserHome).restore(listener)
+        // await new ConfigurationCacheEntryExtractor(this.gradleUserHome).restore(listener)
         await this.debugReportGradleUserHomeSize('after restoring common artifacts')
     }
 
@@ -101,9 +100,9 @@ export class GradleStateCache {
 
             for (const entryListener of listener.cacheEntries) {
                 if (entryListener === gradleHomeEntryListener) {
-                    entryListener.markUnsaved('cache key not changed')
+                    entryListener.markNotSaved('cache key not changed')
                 } else {
-                    entryListener.markUnsaved(`referencing '${this.cacheDescription}' cache entry not saved`)
+                    entryListener.markNotSaved(`referencing '${this.cacheDescription}' cache entry not saved`)
                 }
             }
             return
@@ -130,8 +129,8 @@ export class GradleStateCache {
         await this.debugReportGradleUserHomeSize('before saving common artifacts')
         this.deleteExcludedPaths()
         await Promise.all([
-            new GradleHomeEntryExtractor(this.gradleUserHome).extract(listener),
-            new ConfigurationCacheEntryExtractor(this.gradleUserHome).extract(listener)
+            new GradleHomeEntryExtractor(this.gradleUserHome).extract(listener)
+            // new ConfigurationCacheEntryExtractor(this.gradleUserHome).extract(listener)
         ])
         await this.debugReportGradleUserHomeSize(
             "after extracting common artifacts (only 'caches' and 'notifications' will be stored)"
@@ -142,7 +141,7 @@ export class GradleStateCache {
      * Delete any file paths that are excluded by the `gradle-home-cache-excludes` parameter.
      */
     private deleteExcludedPaths(): void {
-        const rawPaths: string[] = core.getMultilineInput(EXCLUDE_PATHS_PARAMETER)
+        const rawPaths: string[] = params.getCacheExcludes()
         const resolvedPaths = rawPaths.map(x => path.resolve(this.gradleUserHome, x))
 
         for (const p of resolvedPaths) {
@@ -157,7 +156,7 @@ export class GradleStateCache {
      * but this can be overridden by the `gradle-home-cache-includes` parameter.
      */
     protected getCachePath(): string[] {
-        const rawPaths: string[] = core.getMultilineInput(INCLUDE_PATHS_PARAMETER)
+        const rawPaths: string[] = params.getCacheIncludes()
         rawPaths.push(META_FILE_DIR)
         const resolvedPaths = rawPaths.map(x => this.resolveCachePath(x))
         cacheDebug(`Using cache paths: ${resolvedPaths}`)
@@ -173,7 +172,29 @@ export class GradleStateCache {
     }
 
     private initializeGradleUserHome(gradleUserHome: string, initScriptsDir: string): void {
-        const initScriptFilenames = ['build-result-capture.init.gradle', 'build-result-capture-service.plugin.groovy']
+        // Ensure that pre-installed java versions are detected. Only add property if it isn't already defined.
+        const gradleProperties = path.resolve(gradleUserHome, 'gradle.properties')
+        const existingGradleProperties = fs.existsSync(gradleProperties)
+            ? fs.readFileSync(gradleProperties, 'utf8')
+            : ''
+        if (!existingGradleProperties.includes('org.gradle.java.installations.fromEnv=')) {
+            fs.appendFileSync(
+                gradleProperties,
+                `
+# Auto-detect pre-installed JDKs
+org.gradle.java.installations.fromEnv=JAVA_HOME_8_X64,JAVA_HOME_11_X64,JAVA_HOME_17_X64
+`
+            )
+        }
+
+        // Copy init scripts from src/resources
+        const initScriptFilenames = [
+            'gradle-build-action.build-result-capture.init.gradle',
+            'gradle-build-action.build-result-capture-service.plugin.groovy',
+            'gradle-build-action.github-dependency-graph.init.gradle',
+            'gradle-build-action.github-dependency-graph-gradle-plugin-apply.groovy',
+            'gradle-build-action.inject-gradle-enterprise.init.gradle'
+        ]
         for (const initScriptFilename of initScriptFilenames) {
             const initScriptContent = this.readInitScriptAsString(initScriptFilename)
             const initScriptPath = path.resolve(initScriptsDir, initScriptFilename)

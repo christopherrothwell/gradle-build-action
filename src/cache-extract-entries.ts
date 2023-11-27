@@ -3,17 +3,11 @@ import fs from 'fs'
 import * as core from '@actions/core'
 import * as glob from '@actions/glob'
 
+import * as params from './input-params'
+
 import {META_FILE_DIR} from './cache-base'
 import {CacheEntryListener, CacheListener} from './cache-reporting'
-import {
-    cacheDebug,
-    getCacheKeyPrefix,
-    hashFileNames,
-    isCacheDebuggingEnabled,
-    restoreCache,
-    saveCache,
-    tryDelete
-} from './cache-utils'
+import {cacheDebug, getCacheKeyPrefix, hashFileNames, restoreCache, saveCache, tryDelete} from './cache-utils'
 import {loadBuildResults} from './build-results'
 
 const SKIP_RESTORE_VAR = 'GRADLE_BUILD_ACTION_SKIP_RESTORE'
@@ -150,8 +144,7 @@ abstract class AbstractEntryExtractor {
 
             // Find all matching files for this cache entry definition
             const globber = await glob.create(pattern, {
-                implicitDescendants: false,
-                followSymbolicLinks: false
+                implicitDescendants: false
             })
             const matchingFiles = await globber.glob()
 
@@ -213,7 +206,7 @@ abstract class AbstractEntryExtractor {
 
         if (previouslyRestoredKey === cacheKey) {
             cacheDebug(`No change to previously restored ${artifactType}. Not saving.`)
-            entryListener.markUnsaved('contents unchanged')
+            entryListener.markNotSaved('contents unchanged')
         } else {
             core.info(`Caching ${artifactType} with path '${pattern}' and cache key: ${cacheKey}`)
             await saveCache([pattern], cacheKey, entryListener)
@@ -247,7 +240,7 @@ abstract class AbstractEntryExtractor {
 
     // Run actions sequentially if debugging is enabled
     private async awaitForDebugging(p: Promise<ExtractedCacheEntry>): Promise<ExtractedCacheEntry> {
-        if (isCacheDebuggingEnabled()) {
+        if (params.isCacheDebuggingEnabled()) {
             await p
         }
         return p
@@ -308,8 +301,7 @@ export class GradleHomeEntryExtractor extends AbstractEntryExtractor {
     private async deleteWrapperZips(): Promise<void> {
         const wrapperZips = path.resolve(this.gradleUserHome, 'wrapper/dists/*/*/*.zip')
         const globber = await glob.create(wrapperZips, {
-            implicitDescendants: false,
-            followSymbolicLinks: false
+            implicitDescendants: false
         })
 
         for (const wrapperZip of await globber.glob()) {
@@ -340,8 +332,8 @@ export class GradleHomeEntryExtractor extends AbstractEntryExtractor {
 
         return [
             entryDefinition('generated-gradle-jars', ['caches/*/generated-gradle-jars/*.jar'], false),
-            entryDefinition('wrapper-zips', ['wrapper/dists/*/*/'], false), // Entire wrapper directory cached together
-            entryDefinition('java-toolchains', ['jdks/*.zip', 'jdks/*.tar.gz'], false),
+            entryDefinition('wrapper-zips', ['wrapper/dists/*/*/'], false), // Each wrapper directory cached separately
+            entryDefinition('java-toolchains', ['jdks/*/'], false), // Each extracted JDK cached separately
             entryDefinition('dependencies', ['caches/modules-*/files-*/*/*/*/*'], true),
             entryDefinition('instrumented-jars', ['caches/jars-*/*'], true),
             entryDefinition('kotlin-dsl', ['caches/*/kotlin-dsl/*/*'], true)

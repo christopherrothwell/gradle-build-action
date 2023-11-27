@@ -5,7 +5,7 @@ import groovy.json.JsonSlurper
 import static org.junit.Assume.assumeTrue
 
 class TestBuildResultRecorder extends BaseInitScriptTest {
-    def initScript = 'build-result-capture.init.gradle'
+    def initScript = 'gradle-build-action.build-result-capture.init.gradle'
 
     def "produces build results file for build with #testGradleVersion"() {
         assumeTrue testGradleVersion.compatibleWithCurrentJvm
@@ -146,6 +146,34 @@ class TestBuildResultRecorder extends BaseInitScriptTest {
 
         where:
         testGradleVersion << ALL_VERSIONS
+    }
+
+    def "produces build results file with build scan when GE plugin is applied in settingsEvaluated"() {
+        assumeTrue testGradleVersion.compatibleWithCurrentJvm
+
+        when:
+        settingsFile.text = """
+            plugins {
+                id 'com.gradle.enterprise' version '3.15.1' apply(false)
+            }
+            gradle.settingsEvaluated {
+                apply plugin: 'com.gradle.enterprise'
+                gradleEnterprise {
+                    server = '$mockScansServer.address'
+                    buildScan {
+                        publishAlways()
+                    }
+                }
+            }
+        """ + settingsFile.text
+        
+        run(['help'], initScript, testGradleVersion.gradleVersion)
+
+        then:
+        assertResults('help', testGradleVersion, false, true)
+
+        where:
+        testGradleVersion << SETTINGS_PLUGIN_VERSIONS
     }
 
     void assertResults(String task, TestGradleVersion testGradleVersion, boolean hasFailure, boolean hasBuildScan, boolean scanUploadFailed = false) {

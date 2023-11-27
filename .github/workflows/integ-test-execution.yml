@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Download distribution if required
       uses: ./.github/actions/download-dist
     - name: Test use defined Gradle version
@@ -51,12 +51,12 @@ jobs:
       with:
         gradle-executable: .github/workflow-samples/groovy-dsl/gradlew${{ matrix.script-suffix }}
         build-root-directory: .github/workflow-samples/no-wrapper
-        arguments: help -DgradleVersionCheck=7.5
+        arguments: help
 
   gradle-versions:
     strategy:
       matrix:
-        gradle: [7.3, 6.9, 5.6.4, 4.10.3, 3.5.1]
+        gradle: [7.5.1, 6.9.2, 5.6.4, 4.10.3, 3.5.1]
         os: ${{fromJSON(inputs.runner-os)}}
         include:
           - gradle: 5.6.4
@@ -68,7 +68,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Download distribution if required
       uses: ./.github/actions/download-dist
     - name: Setup Java
@@ -84,11 +84,11 @@ jobs:
         gradle-version: ${{matrix.gradle}}
         build-root-directory: .github/workflow-samples/no-wrapper${{ matrix.build-root-suffix }}
         arguments: help -DgradleVersionCheck=${{matrix.gradle}}
-    - name: Check build scan url
+    - name: Check Build Scan url
       if: ${{ !steps.gradle.outputs.build-scan-url }}
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         script: |
-          core.setFailed('No build scan detected')    
+          core.setFailed('No Build Scan detected')    
   
    

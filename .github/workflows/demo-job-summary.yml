@@ -1,4 +1,4 @@
-name: Demo Job Summary for Gradle builds
+name: Demo Job Summary, for Gradle builds
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Build distribution
       shell: bash
       run: |
@@ -23,10 +23,10 @@ jobs:
     - name: Build kotlin-dsl project
       working-directory: .github/workflow-samples/kotlin-dsl
       run: ./gradlew assemble
-    - name: Build kotlin-dsl project without build scan
+    - name: Build kotlin-dsl project without Build Scan®
       working-directory: .github/workflow-samples/kotlin-dsl
       run: ./gradlew assemble check --no-scan
-    - name: Build kotlin-dsl project with build scan publish failure
+    - name: Build kotlin-dsl project with Build Scan® publish failure
       working-directory: .github/workflow-samples/kotlin-dsl
       run: ./gradlew check -Dgradle.enterprise.url=https://not.valid.server
     - name: Build groovy-dsl project
@@ -41,3 +41,25 @@ jobs:
       working-directory: .github/workflow-samples/groovy-dsl
       continue-on-error: true
       run: ./gradlew not-a-real-task
+
+  pre-existing-gradle-home:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+    - name: Build distribution
+      shell: bash
+      run: |
+        npm install
+        npm run build
+    - name: Pre-create Gradle User Home
+      shell: bash
+      run: |
+        mkdir ~/.gradle
+        mkdir ~/.gradle/caches
+        touch ~/.gradle/caches/dummy.txt
+    - name: Setup Gradle
+      uses: ./
+    - name: Run build
+      working-directory: .github/workflow-samples/groovy-dsl
+      run: ./gradlew assemble

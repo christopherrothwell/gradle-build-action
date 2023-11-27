@@ -8,9 +8,9 @@ repositories {
 
 dependencies {
     api("org.apache.commons:commons-math3:3.6.1")
-    implementation("com.google.guava:guava:31.1-jre")
+    implementation("com.google.guava:guava:32.1.3-jre")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.9.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
 }
 
 tasks.test {
@@ -18,8 +18,8 @@ tasks.test {
 }
 
 tasks.named("test").configure {
-    // Echo an output value so we can detect configuration-cache usage
-    println("::set-output name=task_configured::yes")
+    // Write marker file so we can detect if task was configured
+    file("task-configured.txt").writeText("true")
 
     doLast {
         if (System.getProperties().containsKey("verifyCachedBuild")) {

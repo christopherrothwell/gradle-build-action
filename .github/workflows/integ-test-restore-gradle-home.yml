@@ -26,7 +26,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Download distribution if required
       uses: ./.github/actions/download-dist
     - name: Setup Gradle
@@ -46,7 +46,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Download distribution if required
       uses: ./.github/actions/download-dist
     - name: Setup Gradle
@@ -66,7 +66,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Download distribution if required
       uses: ./.github/actions/download-dist
     - name: Setup Gradle
@@ -86,7 +86,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Download distribution if required
       uses: ./.github/actions/download-dist
     - name: Setup Gradle with no extracted cache entries restored
@@ -99,3 +99,40 @@ jobs:
       working-directory: .github/workflow-samples/groovy-dsl
       run: ./gradlew test
 
+  # Test that a pre-existing gradle-user-home can be overwritten by the restored cache
+  pre-existing-gradle-home:
+    needs: seed-build
+    strategy:
+      matrix:
+        os: ${{fromJSON(inputs.runner-os)}}
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+    - name: Download distribution if required
+      uses: ./.github/actions/download-dist
+    - name: Pre-create Gradle User Home
+      shell: bash
+      run: |
+        mkdir -p ~/.gradle/caches
+        touch ~/.gradle/gradle.properties
+        touch ~/.gradle/caches/dummy.txt
+    - name: Setup Gradle
+      uses: ./
+      with:
+        cache-read-only: true
+        cache-overwrite-existing: true
+    - name: Check that pre-existing content still exists
+      shell: bash
+      run: |
+        if [ ! -e ~/.gradle/caches/dummy.txt ]; then
+          echo "::error ::Should find dummy.txt after cache restore"
+          exit 1
+        fi
+        if [ ! -e ~/.gradle/gradle.properties ]; then
+          echo "::error ::Should find gradle.properties after cache restore"
+          exit 1
+        fi
+    - name: Execute Gradle build with --offline
+      working-directory: .github/workflow-samples/groovy-dsl
+      run: ./gradlew test --offline

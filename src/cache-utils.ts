@@ -7,16 +7,11 @@ import * as crypto from 'crypto'
 import * as path from 'path'
 import * as fs from 'fs'
 
+import * as params from './input-params'
+
 import {CacheEntryListener} from './cache-reporting'
 
-const CACHE_PROTOCOL_VERSION = 'v6-'
-
-const JOB_CONTEXT_PARAMETER = 'workflow-job-context'
-const CACHE_DISABLED_PARAMETER = 'cache-disabled'
-const CACHE_READONLY_PARAMETER = 'cache-read-only'
-const CACHE_WRITEONLY_PARAMETER = 'cache-write-only'
-const STRICT_CACHE_MATCH_PARAMETER = 'gradle-home-cache-strict-match'
-const CACHE_DEBUG_VAR = 'GRADLE_BUILD_ACTION_CACHE_DEBUG_ENABLED'
+const CACHE_PROTOCOL_VERSION = 'v8-'
 
 const CACHE_KEY_PREFIX_VAR = 'GRADLE_BUILD_ACTION_CACHE_KEY_PREFIX'
 const CACHE_KEY_OS_VAR = 'GRADLE_BUILD_ACTION_CACHE_KEY_ENVIRONMENT'
@@ -24,23 +19,34 @@ const CACHE_KEY_JOB_VAR = 'GRADLE_BUILD_ACTION_CACHE_KEY_JOB'
 const CACHE_KEY_JOB_INSTANCE_VAR = 'GRADLE_BUILD_ACTION_CACHE_KEY_JOB_INSTANCE'
 const CACHE_KEY_JOB_EXECUTION_VAR = 'GRADLE_BUILD_ACTION_CACHE_KEY_JOB_EXECUTION'
 
+const SEGMENT_DOWNLOAD_TIMEOUT_VAR = 'SEGMENT_DOWNLOAD_TIMEOUT_MINS'
+const SEGMENT_DOWNLOAD_TIMEOUT_DEFAULT = 10 * 60 * 1000 // 10 minutes
+
 export function isCacheDisabled(): boolean {
     if (!cache.isFeatureAvailable()) {
         return true
     }
-    return core.getBooleanInput(CACHE_DISABLED_PARAMETER)
+    return params.isCacheDisabled()
 }
 
 export function isCacheReadOnly(): boolean {
-    return !isCacheWriteOnly() && core.getBooleanInput(CACHE_READONLY_PARAMETER)
+    return !isCacheWriteOnly() && params.isCacheReadOnly()
 }
 
 export function isCacheWriteOnly(): boolean {
-    return core.getBooleanInput(CACHE_WRITEONLY_PARAMETER)
+    return params.isCacheWriteOnly()
+}
+
+export function isCacheOverwriteExisting(): boolean {
+    return params.isCacheOverwriteExisting()
 }
 
 export function isCacheDebuggingEnabled(): boolean {
-    return process.env[CACHE_DEBUG_VAR] ? true : false
+    return params.isCacheDebuggingEnabled()
+}
+
+export function isCacheCleanupEnabled(): boolean {
+    return params.isCacheCleanupEnabled()
 }
 
 /**
@@ -64,7 +70,7 @@ export class CacheKey {
  * - The cache protocol version
  * - The name of the cache
  * - The runner operating system
- * - The name of the Job being executed
+ * - The name of the workflow and Job being executed
  * - The matrix values for the Job being executed (job context)
  * - The SHA of the commit being executed
  *
@@ -89,7 +95,7 @@ export function generateCacheKey(cacheName: string): CacheKey {
     // Exact match on Git SHA
     const cacheKey = `${cacheKeyForJobContext}-${getCacheKeyJobExecution()}`
 
-    if (core.getBooleanInput(STRICT_CACHE_MATCH_PARAMETER)) {
+    if (params.isCacheStrictMatch()) {
         return new CacheKey(cacheKey, [cacheKeyForJobContext])
     }
 
@@ -107,8 +113,12 @@ function getCacheKeyEnvironment(): string {
 }
 
 function getCacheKeyJob(): string {
-    // Prefix can be used to force change all cache keys (defaults to cache protocol version)
-    return process.env[CACHE_KEY_JOB_VAR] || github.context.job
+    return process.env[CACHE_KEY_JOB_VAR] || getCacheKeyForJob(github.context.workflow, github.context.job)
+}
+
+export function getCacheKeyForJob(workflowName: string, jobId: string): string {
+    const sanitizedWorkflow = workflowName.replace(/,/g, '').toLowerCase()
+    return `${sanitizedWorkflow}-${jobId}`
 }
 
 function getCacheKeyJobInstance(): string {
@@ -119,8 +129,23 @@ function getCacheKeyJobInstance(): string {
 
     // By default, we hash the full `matrix` data for the run, to uniquely identify this job invocation
     // The only way we can obtain the `matrix` data is via the `workflow-job-context` parameter in action.yml.
-    const workflowJobContext = core.getInput(JOB_CONTEXT_PARAMETER)
+    const workflowJobContext = params.getJobMatrix()
     return hashStrings([workflowJobContext])
+}
+
+export function getUniqueLabelForJobInstance(): string {
+    return getUniqueLabelForJobInstanceValues(github.context.workflow, github.context.job, params.getJobMatrix())
+}
+
+export function getUniqueLabelForJobInstanceValues(workflow: string, jobId: string, matrixJson: string): string {
+    const matrix = JSON.parse(matrixJson)
+    const matrixString = Object.values(matrix).join('-')
+    const label = matrixString ? `${workflow}-${jobId}-${matrixString}` : `${workflow}-${jobId}`
+    return sanitize(label)
+}
+
+function sanitize(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase()
 }
 
 function getCacheKeyJobExecution(): string {
@@ -148,12 +173,17 @@ export async function restoreCache(
 ): Promise<cache.CacheEntry | undefined> {
     listener.markRequested(cacheKey, cacheRestoreKeys)
     try {
-        const restoredEntry = await cache.restoreCache(cachePath, cacheKey, cacheRestoreKeys)
+        // Only override the read timeout if the SEGMENT_DOWNLOAD_TIMEOUT_MINS env var has NOT been set
+        const cacheRestoreOptions = process.env[SEGMENT_DOWNLOAD_TIMEOUT_VAR]
+            ? {}
+            : {segmentTimeoutInMs: SEGMENT_DOWNLOAD_TIMEOUT_DEFAULT}
+        const restoredEntry = await cache.restoreCache(cachePath, cacheKey, cacheRestoreKeys, cacheRestoreOptions)
         if (restoredEntry !== undefined) {
             listener.markRestored(restoredEntry.key, restoredEntry.size)
         }
         return restoredEntry
     } catch (error) {
+        listener.markNotRestored((error as Error).message)
         handleCacheFailure(error, `Failed to restore ${cacheKey}`)
         return undefined
     }
@@ -166,6 +196,8 @@ export async function saveCache(cachePath: string[], cacheKey: string, listener:
     } catch (error) {
         if (error instanceof cache.ReserveCacheError) {
             listener.markAlreadyExists(cacheKey)
+        } else {
+            listener.markNotSaved((error as Error).message)
         }
         handleCacheFailure(error, `Failed to save cache entry with path '${cachePath}' and key: ${cacheKey}`)
     }
@@ -208,7 +240,7 @@ export async function tryDelete(file: string): Promise<void> {
         try {
             const stat = fs.lstatSync(file)
             if (stat.isDirectory()) {
-                fs.rmdirSync(file, {recursive: true})
+                fs.rmSync(file, {recursive: true})
             } else {
                 fs.unlinkSync(file)
             }
